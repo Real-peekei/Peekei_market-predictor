@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Market Terminal — Predictive Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="term-header">
+    <div class="term-title">
+      <span class="prompt">$</span> MARKET_PREDICTOR<span class="cursor">_</span>
+    </div>
+    <div class="api-status" id="apiStatus">
+      <span class="dot" id="apiDot"></span>
+      <span id="apiStatusText">CONNECTING…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls-bar">
+      <div class="field">
+        <label for="assetSelect">ASSET</label>
+        <select id="assetSelect"></select>
+      </div>
+      <div class="field">
+        <label for="intervalSelect">TIMEFRAME</label>
+        <select id="intervalSelect"></select>
+      </div>
+      <button id="refreshBtn" class="term-btn">RUN PREDICTION</button>
+      <button id="allBtn" class="term-btn secondary">ALL TIMEFRAMES</button>
+    </section>
+
+    <section id="allArea" class="hidden">
+      <div class="panel">
+        <h2 class="panel-title">// ALL TIMEFRAMES AT ONCE</h2>
+        <div id="allList"></div>
+      </div>
+    </section>
+
+    <section id="emptyState" class="empty-state">
+      &gt; select a timeframe and run the model to generate a live forecast.
+    </section>
+
+    <section id="predictArea" class="hidden">
+
+      <div class="panel price-panel">
+        <div class="price-row">
+          <div>
+            <span class="label">LAST CLOSE</span>
+            <span class="big-num" id="lastClose">—</span>
+          </div>
+          <div>
+            <span class="label">AS OF</span>
+            <span class="mono-val" id="asOf">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">// NEXT-BAR DIRECTION</h2>
+        <div class="direction-row">
+          <div class="direction-badge" id="directionBadge">—</div>
+          <div class="confidence-block">
+            <span class="label">CONFIDENCE</span>
+            <div class="conf-bar"><div class="conf-fill" id="confFill"></div></div>
+            <span class="mono-val" id="confVal">—</span>
+          </div>
+        </div>
+        <div class="prob-split">
+          <div class="prob-cell up">
+            <span class="label">P(UP)</span>
+            <span class="mono-val" id="probUp">—</span>
+          </div>
+          <div class="prob-cell down">
+            <span class="label">P(DOWN)</span>
+            <span class="mono-val" id="probDown">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">// EXPECTED RANGE (20TH–80TH PERCENTILE)</h2>
+        <div class="range-display">
+          <span class="range-val low" id="rangeLow">—</span>
+          <div class="range-track"><div class="range-fill" id="rangeFill"></div></div>
+          <span class="range-val high" id="rangeHigh">—</span>
+        </div>
+      </div>
+
+      <div class="panel trust-panel" id="trustPanel">
+        <h2 class="panel-title">// SHOULD YOU TRUST THIS ONE?</h2>
+        <div class="trust-headline" id="trustHeadline">—</div>
+        <p class="trust-explain" id="trustExplain">—</p>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">// WALK-FORWARD BACKTEST <span class="subnote">(honest, out-of-sample)</span></h2>
+        <div class="equity-chart-wrap">
+          <svg id="equityChart" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+          <div class="legend">
+            <span><i class="swatch strat"></i>MODEL</span>
+            <span><i class="swatch bh"></i>BUY &amp; HOLD</span>
+          </div>
+        </div>
+        <div class="metrics-grid" id="metricsGrid"></div>
+      </div>
+
+      <div class="panel disclaimer">
+        &gt; NOT FINANCIAL ADVICE. Backtest is a walk-forward simulation (periodic retraining,
+        no future data leakage) but still assumes zero fees/slippage and frictionless execution.
+        A hit rate near 50% means the model has little edge over a coin flip at this timeframe/asset —
+        check the metrics above before trusting the direction call.
+      </div>
+
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
