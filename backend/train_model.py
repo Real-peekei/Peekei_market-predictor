@@ -74,12 +74,14 @@ def run(data_path: str, interval: str, asset_key: str, retrain_every: int,
 
     feat_df = build_features(df)
 
-    print("Comparing candidate direction models on chronological hold-out...")
+    print("Evaluating candidates + ensemble with rolling-origin CV...")
     comparison = compare_candidates(feat_df)
-    for r in comparison["results"]:
-        print(f"  {r['name']:20s} accuracy: {r['accuracy']:.3f}   log-loss: {r['log_loss']:.3f}  (lower is better)")
+    print(f"  ({comparison['n_folds']} fold{'s' if comparison['n_folds'] != 1 else ''})")
+    for r in sorted(comparison["results"], key=lambda r: r["log_loss"]):
+        print(f"  {r['name']:20s} log-loss: {r['log_loss']:.3f} ± {r.get('log_loss_std', 0.0):.3f}   "
+              f"accuracy: {r['accuracy']:.3f}")
     model_name = comparison["best"]
-    print(f"  -> best model: {model_name}")
+    print(f"  -> selected: {model_name}")
     if comparison["gap_to_runner_up"] is not None and comparison["gap_to_runner_up"] < 0.02:
         print(f"  NOTE: gap to next-best is only {comparison['gap_to_runner_up']:.3f} log-loss - treat as a near tie.")
 

@@ -28,6 +28,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, log_loss
 
 from indicators import FEATURE_COLS
+from model_selection import rolling_origin_cv, fit_named_model, EnsembleClassifier
 
 # If you re-enable n_jobs on any estimator below, note that joblib's
 # parallel workers run in separate processes and won't inherit this
@@ -65,48 +66,79 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=FEATURE_COLS + ["target_return", "target_direction"]).reset_index(drop=True)
 
 
-def compare_candidates(df: pd.DataFrame, test_frac: float = 0.2) -> dict:
+def compare_candidates(df: pd.DataFrame, n_splits: int = 5) -> dict:
     """
-    Trains each candidate direction-classifier on the first (1-test_frac)
-    of the data (chronological, no shuffling) and scores it on the rest.
-    Returns the comparison table and the name of the best model by log-loss.
+    Evaluates every candidate direction-classifier PLUS their equal-weight
+    ensemble using rolling-origin CV (several sequential chronological
+    folds) rather than a single train/test split. A single split is a
+    noisy estimate of which model is "best" - and financial bar data is
+    especially prone to a flexible model looking good on one split by
+    fitting noise, since bars aren't independent and markets are close to
+    a random walk at most timeframes. Whichever of the 4 options (3
+    candidates + ensemble) scores best on mean CV log-loss is what
+    actually gets used - the ensemble isn't assumed to win just because
+    averaging sounds more sophisticated.
 
-    NOTE: with a single hold-out split, a small log-loss gap between two
-    candidates is noise, not a real edge - the printed gap-to-runner-up
-    tells you how seriously to take "best".
+    Falls back to a single chronological split if there isn't enough data
+    for meaningful rolling CV.
     """
     data = _clean(df)
-    n = len(data)
-    split = int(n * (1 - test_frac))
-    X_train, X_test = data[FEATURE_COLS].iloc[:split], data[FEATURE_COLS].iloc[split:]
-    y_train, y_test = data["target_direction"].iloc[:split], data["target_direction"].iloc[split:]
+    X = data[FEATURE_COLS]
+    y = data["target_direction"]
 
-    results = []
-    for name, make_model in CANDIDATE_MODELS.items():
-        model = make_model()
-        model.fit(X_train, y_train)
-        probs = model.predict_proba(X_test)
-        preds = model.predict(X_test)
-        acc = accuracy_score(y_test, preds)
-        ll = log_loss(y_test, probs, labels=[0, 1])
-        results.append({"name": name, "accuracy": float(acc), "log_loss": float(ll)})
+    cv = rolling_origin_cv(X, y, CANDIDATE_MODELS, n_splits=n_splits, classes=(0, 1))
 
-    best = min(results, key=lambda r: r["log_loss"])
-    sorted_ll = sorted(r["log_loss"] for r in results)
+    if cv is not None:
+        candidate_results = cv["candidates"]
+        ensemble_results = cv["ensemble"]
+        n_folds = cv["n_folds"]
+    else:
+        # not enough data for rolling CV - fall back to a single chronological split
+        n = len(data)
+        split = int(n * 0.8)
+        X_train, X_test = X.iloc[:split], X.iloc[split:]
+        y_train, y_test = y.iloc[:split], y.iloc[split:]
+
+        candidate_results, fold_probs = {}, []
+        for name, make_model in CANDIDATE_MODELS.items():
+            model = make_model()
+            model.fit(X_train, y_train)
+            probs = model.predict_proba(X_test)
+            preds = model.predict(X_test)
+            candidate_results[name] = {
+                "log_loss_mean": log_loss(y_test, probs, labels=[0, 1]),
+                "log_loss_std": 0.0,
+                "accuracy_mean": accuracy_score(y_test, preds),
+            }
+            fold_probs.append(probs)
+        ensemble_probs = np.mean(fold_probs, axis=0)
+        ensemble_results = {
+            "log_loss_mean": log_loss(y_test, ensemble_probs, labels=[0, 1]),
+            "log_loss_std": 0.0,
+            "accuracy_mean": accuracy_score(y_test, np.argmax(ensemble_probs, axis=1)),
+        }
+        n_folds = 1
+
+    all_options = {**candidate_results, "ensemble": ensemble_results}
+    results = [{"name": name, "accuracy": r["accuracy_mean"], "log_loss": r["log_loss_mean"],
+                "log_loss_std": r["log_loss_std"]} for name, r in all_options.items()]
+
+    best_name = min(all_options, key=lambda k: all_options[k]["log_loss_mean"])
+    sorted_ll = sorted(r["log_loss_mean"] for r in all_options.values())
     gap = sorted_ll[1] - sorted_ll[0] if len(sorted_ll) > 1 else None
 
-    return {"results": results, "best": best["name"], "gap_to_runner_up": gap}
+    return {"results": results, "best": best_name, "gap_to_runner_up": gap, "n_folds": n_folds}
 
 
 def train_full(df: pd.DataFrame, model_name: str = "gradient_boosting"):
-    """Train on ALL available data using the given model type - this is
+    """Train on ALL available data using the given model type (or the
+    ensemble of all candidates, if model_name == "ensemble") - this is
     what's actually used for live /predict calls (no future data to hold
     out at inference time)."""
     data = _clean(df)
     X = data[FEATURE_COLS]
 
-    clf = CANDIDATE_MODELS[model_name]()
-    clf.fit(X, data["target_direction"])
+    clf = fit_named_model(model_name, CANDIDATE_MODELS, X, data["target_direction"], classes=(0, 1))
 
     reg_low = GradientBoostingRegressor(loss="quantile", alpha=0.2, n_estimators=150, max_depth=3, learning_rate=0.05)
     reg_high = GradientBoostingRegressor(loss="quantile", alpha=0.8, n_estimators=150, max_depth=3, learning_rate=0.05)
@@ -176,8 +208,7 @@ def walk_forward_backtest(df: pd.DataFrame, interval: str, model_name: str = "gr
     for step, i in enumerate(range(start_i, n - 1)):
         if clf is None or (i - start_i) % retrain_every == 0:
             train_start = max(0, i - max_train_window) if max_train_window else 0
-            clf = CANDIDATE_MODELS[model_name]()
-            clf.fit(X_all[train_start:i], y_dir_all[train_start:i])
+            clf = fit_named_model(model_name, CANDIDATE_MODELS, X_all[train_start:i], y_dir_all[train_start:i], classes=(0, 1))
             if verbose and (i - start_i) % (retrain_every * 20) == 0 and step > 0:
                 print(f"    ...{step}/{total_steps} bars tested "
                       f"({step / total_steps:.0%})")
